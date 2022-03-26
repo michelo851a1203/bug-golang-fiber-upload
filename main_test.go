@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/gofiber/fiber/v2"
@@ -81,4 +82,54 @@ func TestUploadHandler(t *testing.T) {
 	bodyReader, err := io.ReadAll(res.Body)
 	assert.Nil(err)
 	assert.Contains(string(bodyReader), <-imgChan)
+}
+
+func TestUploadSolvedWithBufferHandler(t *testing.T) {
+
+	assert := assert.New(t)
+	body := bytes.NewBuffer(nil)
+	writer := multipart.NewWriter(body)
+
+	imgChan := make(chan string, 1)
+
+	go func() {
+		defer writer.Close()
+		ioWriter, err := writer.CreateFormFile("file", "test.png")
+
+		assert.Nil(err)
+		img := createImage()
+		err = png.Encode(ioWriter, img)
+		assert.Nil(err)
+
+		buf := new(bytes.Buffer)
+
+		err = png.Encode(buf, img)
+		assert.Nil(err)
+		byteContainer := buf.Bytes()
+
+		baseStr := base64.StdEncoding.EncodeToString(byteContainer)
+
+		jsonByte, err := json.Marshal(map[string]interface{}{
+			"msg": fmt.Sprintf("data:image/png;base64,%s", baseStr),
+		})
+
+		assert.Nil(err)
+		imgChan <- string(jsonByte)
+	}()
+
+	imgStr := <-imgChan
+
+	req := httptest.NewRequest("POST", "/upload", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	app := CreateFiberApp()
+	res, err := app.Test(req)
+	assert.Nil(err)
+
+	assert.Equal(res.StatusCode, fiber.StatusOK)
+	bodyByte, err := io.ReadAll(res.Body)
+	assert.Nil(err)
+
+	assert.Contains(string(bodyByte), imgStr)
+
 }
